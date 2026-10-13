@@ -1,0 +1,40 @@
+# Local AI-agent instructions, never publish these
+AGENTS.md
+agents.md
+
+# Python
+__pycache__/
+*.py[cod]
+*.spec
+build/
+
+# Rust
+sacd_tool/target/
+
+# Built / bundled binaries
+sacd_gui/dist/
+sacd_gui/tool/
+
+# Logs and scratch files
+*.log
+*.err
+out.txt
+err.txt
+run_out.txt
+smoke.txt
+_snap.py
+_uitest.err
+
+# Local reference copies of upstream sources
+_ref/
+
+# Disc images and extracted audio
+*.iso
+*.dsf
+*.wav
+
+# Editor / OS junk
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
