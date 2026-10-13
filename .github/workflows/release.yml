@@ -1,0 +1,126 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            asset: SACD-Extractor.exe
+            path: sacd_gui/dist/SACD-Extractor.exe
+          - os: ubuntu-latest
+            asset: SACD-Extractor-linux.tar.gz
+            path: SACD-Extractor-linux.tar.gz
+          - os: macos-latest
+            asset: SACD-Extractor-macOS.zip
+            path: SACD-Extractor-macOS.zip
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Qt/X11 libraries (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libgl1 libegl1 libxkbcommon-x11-0 libdbus-1-3 \
+            libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 \
+            libxcb-render-util0 libxcb-shape0 libxcb-xinerama0 libxcb-cursor0
+
+      - name: Build sacd-tool
+        run: cargo build --release --manifest-path sacd_tool/Cargo.toml
+
+      - name: Stage the tool next to the GUI sources
+        shell: bash
+        run: |
+          mkdir -p sacd_gui/tool
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            cp sacd_tool/target/release/sacd-tool.exe sacd_gui/tool/
+          else
+            cp sacd_tool/target/release/sacd-tool sacd_gui/tool/
+            chmod +x sacd_gui/tool/sacd-tool
+          fi
+
+      - name: Install PyInstaller
+        run: python -m pip install --upgrade pip PySide6 pyinstaller
+
+      - name: Build the GUI (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        working-directory: sacd_gui
+        run: |
+          python -m PyInstaller --noconfirm --onefile --windowed \
+            --name SACD-Extractor \
+            --icon ../resources/icon.ico \
+            --add-data "worker.py;." \
+            --add-data "tool;tool" \
+            app.py
+
+      - name: Build the GUI (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        working-directory: sacd_gui
+        run: |
+          python -m PyInstaller --noconfirm --onefile --windowed \
+            --name SACD-Extractor \
+            --icon ../resources/icon.icns \
+            --add-data "worker.py:." \
+            --add-data "tool:tool" \
+            app.py
+          ditto -c -k --keepParent dist/SACD-Extractor.app ../SACD-Extractor-macOS.zip
+
+      - name: Build the GUI (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        working-directory: sacd_gui
+        run: |
+          python -m PyInstaller --noconfirm --onefile --windowed \
+            --name SACD-Extractor \
+            --add-data "worker.py:." \
+            --add-data "tool:tool" \
+            app.py
+          tar -czf ../SACD-Extractor-linux.tar.gz -C dist SACD-Extractor
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.os }}
+          path: ${{ matrix.path }}
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish the platform builds to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls -l dist
+          if ! gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+              --title "$GITHUB_REF_NAME" \
+              --notes "Self-contained builds for Windows, macOS and Linux."
+          fi
+          gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+            --clobber dist/*

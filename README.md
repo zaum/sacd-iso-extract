@@ -13,7 +13,7 @@ the finished tracks land in a new folder next to the source ISO.
 - **Clear tracklist** button to start over; it also resets the progress bar.
 - Optional deletion of the source ISO after a successful extraction.
 - Damaged sectors are skipped with a warning instead of aborting the whole disc.
-- Resizable window; runs as a self-contained Windows executable.
+- Resizable window; self-contained executables for Windows, macOS and Linux.
 
 ## How it works
 
@@ -27,8 +27,9 @@ The helper prints one JSON object per line (`album`, `track_start`,
 
 ## Using it
 
-1. Run `sacd_gui/dist/SACD-Extractor.exe`, or start from source with
-   `python sacd_gui/app.py`.
+1. Download the build for your platform from the
+   [Releases](../../releases) page (Windows `.exe`, macOS `.zip`, Linux
+   `.tar.gz`), or run from source with `python sacd_gui/app.py`.
 2. Drop a SACD `.iso` onto the drop area (or click to browse).
 3. With **Autostart extract** ticked (default) extraction begins as soon as
    the track list appears; otherwise press **Extract**.
