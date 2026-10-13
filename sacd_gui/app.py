@@ -1122,6 +1122,44 @@ class MainWindow(QMainWindow):
         except Exception:  # noqa: BLE001 - cosmetic, never crash
             pass
 
+    def _apply_thick_frame(self) -> None:
+        """Make the frameless window resizable from its edges.
+
+        Windows only runs its sizing loop (edge drag, corner drag, arrow
+        keys, Aero Snap) for windows carrying the ``WS_THICKFRAME`` style.
+        ``nativeEvent()`` already answers WM_NCHITTEST with HTLEFT/HTRIGHT/
+        HTTOP/... but without that style the answers are ignored, so every
+        edge was dead and only the corner grip worked. On a frameless
+        window the style adds no visible frame, and Qt re-creates the
+        native handle whenever a window flag changes, so this is re-asserted
+        from showEvent/changeEvent.
+        """
+        if sys.platform != "win32":
+            return
+        try:
+            import ctypes
+
+            user32 = ctypes.windll.user32
+            # 64-bit-safe prototypes (same reasoning as _apply_native_topmost).
+            user32.GetWindowLongW.argtypes = [ctypes.c_void_p, ctypes.c_int]
+            user32.GetWindowLongW.restype = ctypes.c_long
+            user32.SetWindowLongW.argtypes = [
+                ctypes.c_void_p,
+                ctypes.c_int,
+                ctypes.c_long,
+            ]
+            user32.SetWindowLongW.restype = ctypes.c_long
+
+            GWL_STYLE = -16
+            WS_THICKFRAME = 0x00040000
+
+            hwnd = ctypes.c_void_p(int(self.winId()))
+            style = user32.GetWindowLongW(hwnd, GWL_STYLE)
+            if not style & WS_THICKFRAME:
+                user32.SetWindowLongW(hwnd, GWL_STYLE, style | WS_THICKFRAME)
+        except Exception:  # noqa: BLE001 - cosmetic, never crash
+            pass
+
     def _apply_native_topmost(self) -> None:
         """Apply ``_want_topmost`` to the native window via the Win32 API.
 
@@ -1194,6 +1232,9 @@ class MainWindow(QMainWindow):
             and sys.platform == "win32"
         ):
             QTimer.singleShot(0, self._apply_native_topmost)
+            # Minimise/restore rebuilds the native handle in some Qt
+            # versions, which would drop the sizing style again.
+            QTimer.singleShot(0, self._apply_thick_frame)
         super().changeEvent(event)
 
     def on_pin_toggled(self, checked: bool) -> None:
@@ -1240,6 +1281,7 @@ class MainWindow(QMainWindow):
         if sys.platform == "win32":
             QTimer.singleShot(0, self._apply_native_topmost)
             QTimer.singleShot(0, self._apply_rounded_corners)
+            QTimer.singleShot(0, self._apply_thick_frame)
         # Any resize after this point is the user's doing, not startup
         # geometry, so auto-fit must stop respecting it.
         QTimer.singleShot(0, self._arm_size_tracking)
