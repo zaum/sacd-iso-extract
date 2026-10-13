@@ -43,6 +43,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QLayout,
     QMainWindow,
     QProgressBar,
     QPushButton,
@@ -345,8 +346,11 @@ class MainWindow(QMainWindow):
         # always-on-top pin, minimise/close) is docked into the window's
         # menu-widget strip, i.e. the very top edge of the window.
         self.setWindowFlag(Qt.FramelessWindowHint, True)
+        # Wide enough for the whole options row (checkboxes + layer + Extract)
+        # to fit on one line; the real minimum is computed from the layout
+        # after the widgets are built (see below).
         self.setMinimumWidth(360)
-        self.resize(560, 640)
+        self.resize(880, 640)
 
         self.title_bar = TitleBar(self)
         self.setMenuWidget(self.title_bar)
@@ -471,6 +475,10 @@ class MainWindow(QMainWindow):
         self.extract_btn.setEnabled(False)
         self.extract_btn.clicked.connect(self.start_extract)
         opt.addWidget(self.extract_btn)
+        # Never squeeze this row below its natural width: on a narrow window
+        # the checkboxes would otherwise clip their labels. The constraint
+        # raises the window's minimum width to fit the row instead.
+        opt.setSizeConstraint(QLayout.SetMinimumSize)
         root.addLayout(opt)
 
         # --- Track list ------------------------------------------------
@@ -512,6 +520,11 @@ class MainWindow(QMainWindow):
         # The tool path is no longer surfaced in a status bar; the status
         # bar itself is hidden so the window stays compact.
         self.statusBar().hide()
+
+        # The options row must never be squeezed below its natural width:
+        # raise the window's minimum width to whatever the content needs so
+        # the checkbox labels stay readable at any allowed window size.
+        self.setMinimumWidth(max(360, self.centralWidget().minimumSizeHint().width()))
 
         self._restore_settings()
 
@@ -1216,6 +1229,10 @@ class MainWindow(QMainWindow):
         geometry = s.value("geometry")
         if geometry:
             self.restoreGeometry(geometry)
+            # A saved geometry can predate a wider content minimum, so it
+            # must not restore a window too narrow for the options row.
+            if self.width() < self.minimumWidth():
+                self.resize(self.minimumWidth(), self.height())
 
     def showEvent(self, event: QEvent) -> None:  # noqa: D102
         # On first show, re-apply the native topmost bit to match the pin so
