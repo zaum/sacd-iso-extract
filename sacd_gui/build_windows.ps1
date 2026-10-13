@@ -19,6 +19,11 @@ $distDir    = Join-Path $guiDir "dist"
 $iconFile   = Join-Path $root "resources\icon.ico"
 
 Write-Host "==> Building Rust helper (sacd-tool) ..."
+
+# Panic messages of third-party crates embed absolute source paths. Remap the
+# user profile so the shipped binary does not leak the local account name.
+$env:RUSTFLAGS = "--remap-path-prefix=$env:USERPROFILE=cargo-home"
+
 Push-Location $toolDir
 try {
     cargo build --release
