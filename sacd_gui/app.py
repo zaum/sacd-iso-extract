@@ -374,9 +374,6 @@ class MainWindow(QMainWindow):
         self._iso_queue: list[str] = []
         self._disc_total = 0
         self._disc_done = 0
-        self._iso_queue: list[str] = []
-        self._disc_total = 0
-        self._disc_done = 0
         self._batch_active = False
         self._draining = False
         self._disc_index = 0          # disc currently LOADING (metadata)
@@ -386,6 +383,11 @@ class MainWindow(QMainWindow):
         self._extract_queue: list[int] = []
         self._extract_disc_idx = 0    # disc currently EXTRACTING
         self._extracting = False
+        # Busy state is tracked with plain flags instead of
+        # QThread.isRunning(): by the time a worker's own signal reaches the
+        # GUI the thread can still report itself as running, which used to
+        # leave the Clear button stuck (and ignoring clicks) after an error.
+        self._listing = False
         # Last error text already displayed in the list; used to skip the
         # duplicate when the process exit carries the same message.
         self._last_error: str | None = None
@@ -705,9 +707,7 @@ class MainWindow(QMainWindow):
         # The live handlers address rows by index, so wiping the table
         # while a load or an extraction runs would send updates to the
         # wrong place (or nowhere). The button is disabled then anyway.
-        if self._list_busy() or (
-            self.extract_worker is not None and self.extract_worker.isRunning()
-        ):
+        if self._listing or self._extracting:
             return
         self._batch_active = False
         self._reset_batch_ui()
@@ -721,10 +721,9 @@ class MainWindow(QMainWindow):
 
     def _sync_clear_btn(self) -> None:
         """Enable "Clear tracklist" only when there is something to clear."""
-        busy = self._list_busy() or (
-            self.extract_worker is not None and self.extract_worker.isRunning()
+        self.clear_btn.setEnabled(
+            not (self._listing or self._extracting) and self.table.rowCount() > 0
         )
-        self.clear_btn.setEnabled(not busy and self.table.rowCount() > 0)
 
     def _advance_queue(self) -> None:
         """Load metadata for the next queued disc (loads run one by one)."""
@@ -757,17 +756,27 @@ class MainWindow(QMainWindow):
         self.load_metadata(path)
 
     def _list_busy(self) -> bool:
-        return bool(self.list_worker and self.list_worker.isRunning())
+        return self._listing
 
     def load_metadata(self, path: str) -> None:
         self.list_worker = ListWorker(self.tool, path)
         self.list_worker.finished_ok.connect(self.on_metadata)
         self.list_worker.failed.connect(self.on_worker_error)
+        # Safety net: a worker that dies without emitting either signal
+        # still has to unblock the UI.
+        self.list_worker.finished.connect(self._on_list_finished)
+        self._listing = True
         self.list_worker.start()
         self._sync_clear_btn()
 
+    def _on_list_finished(self) -> None:
+        if self.sender() is self.list_worker:
+            self._listing = False
+            self._sync_clear_btn()
+
     @Slot(dict)
     def on_metadata(self, info: dict) -> None:
+        self._listing = False
         self.disc_info = info
         album = info.get("album") or "(unknown album)"
         artist = info.get("artist") or ""
@@ -803,9 +812,7 @@ class MainWindow(QMainWindow):
             if self._draining:
                 self._advance_extraction()
         self._advance_queue()
-        # Deferred: the list worker is still winding down, so the busy
-        # check would keep the Clear button disabled for a moment.
-        QTimer.singleShot(0, self._sync_clear_btn)
+        self._sync_clear_btn()
 
     def populate_tracks(self, info: dict) -> None:
         """Add layer info + track rows inside this disc's section."""
@@ -922,6 +929,7 @@ class MainWindow(QMainWindow):
 
     @Slot(str)
     def on_worker_error(self, message: str) -> None:
+        self._listing = False
         # The failure lands in red inside the disc's section; no dialog.
         self._section_info(f"✗ {message}", "#c0392b",
                            for_disc=self._disc_index)
@@ -930,7 +938,7 @@ class MainWindow(QMainWindow):
         if self._batch_active:
             self._disc_loaded += 1
             self._advance_queue()
-        QTimer.singleShot(0, self._sync_clear_btn)
+        self._sync_clear_btn()
 
     # ------------------------------------------------------------------
     def output_dir_for(self) -> Path:
@@ -944,7 +952,7 @@ class MainWindow(QMainWindow):
             return
         if self._iso_queue or self._extract_queue or self._extracting:
             return
-        if self._extract_worker and self.extract_worker.isRunning():
+        if self.extract_worker and self.extract_worker.isRunning():
             return
         if self._disc_done < self._disc_total:
             return
@@ -1012,7 +1020,15 @@ class MainWindow(QMainWindow):
         self.extract_worker.event.connect(self.on_extract_event)
         self.extract_worker.finished_ok.connect(self.on_extract_done)
         self.extract_worker.failed.connect(self.on_extract_error)
+        # Safety net: a worker that dies without emitting either signal
+        # still has to unblock the UI.
+        self.extract_worker.finished.connect(self._on_extract_finished)
         self.extract_worker.start()
+
+    def _on_extract_finished(self) -> None:
+        if self.sender() is self.extract_worker:
+            self._extracting = False
+            self._sync_clear_btn()
 
     def start_extract(self) -> None:
         if not self.disc_info or not self._extract_queue:
@@ -1075,11 +1091,15 @@ class MainWindow(QMainWindow):
         # Continue with the next queued disc (closes the batch when empty).
         self._disc_done += 1
         self._extract_disc_idx = 0
-        if self._draining:
-            self._advance_extraction()
-        else:
-            self._finish_batch_if_done()
-        QTimer.singleShot(0, self._sync_clear_btn)
+        try:
+            if self._draining:
+                self._advance_extraction()
+            else:
+                self._finish_batch_if_done()
+        finally:
+            # Even if chaining the next disc blew up, the button state has
+            # to follow the flags or it would stay stuck.
+            self._sync_clear_btn()
 
     @Slot(str)
     def on_extract_error(self, message: str) -> None:
@@ -1094,11 +1114,15 @@ class MainWindow(QMainWindow):
         # Skip the failed disc and continue with the next one in the queue.
         self._disc_done += 1
         self._extract_disc_idx = 0
-        if self._draining:
-            self._advance_extraction()
-        else:
-            self._finish_batch_if_done()
-        QTimer.singleShot(0, self._sync_clear_btn)
+        try:
+            if self._draining:
+                self._advance_extraction()
+            else:
+                self._finish_batch_if_done()
+        finally:
+            # Even if chaining the next disc blew up, the button state has
+            # to follow the flags or it would stay stuck.
+            self._sync_clear_btn()
 
     # ------------------------------------------------------------------
     @staticmethod
