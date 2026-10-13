@@ -48,7 +48,6 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QProgressBar,
     QPushButton,
-    QSizeGrip,
     QTableWidget,
     QTableWidgetItem,
     QToolButton,
@@ -505,21 +504,26 @@ class MainWindow(QMainWindow):
         self.table.setMaximumHeight(_MAX_TABLE_H)
         root.addWidget(self.table, 1)
 
-        # Corner grip so the frameless window stays user-resizable.
-        grip_row = QHBoxLayout()
-        grip_row.addStretch(1)
-        self._grip = QSizeGrip(self)
-        self._grip.setFixedSize(16, 16)
-        grip_row.addWidget(self._grip)
-        root.addLayout(grip_row)
+        # --- Progress + clear -----------------------------------------
+        # The old corner-grip row lived here (a 16 px strip above the bar).
+        # It is gone: the native sizing style (see _apply_thick_frame)
+        # makes the window edges resize it, so that strip was dead space.
+        progress_row = QHBoxLayout()
+        self.clear_btn = QPushButton("Clear tracklist")
+        self.clear_btn.setToolTip(
+            "Remove every disc and track from the list and reset progress."
+        )
+        self.clear_btn.setEnabled(False)
+        self.clear_btn.clicked.connect(self.clear_tracklist)
+        progress_row.addWidget(self.clear_btn)
 
-        # --- Progress --------------------------------------------------
         self.progress = QProgressBar()
         self.progress.setRange(0, 100)
         self.progress.setValue(0)
         self.progress.setTextVisible(True)
         self.progress.setFixedHeight(28)
-        root.addWidget(self.progress)
+        progress_row.addWidget(self.progress, 1)
+        root.addLayout(progress_row)
 
         # The tool path is no longer surfaced in a status bar; the status
         # bar itself is hidden so the window stays compact.
@@ -693,6 +697,34 @@ class MainWindow(QMainWindow):
         self._section_rows = {}
         self.table.setRowCount(0)
         self.progress.setValue(0)
+        self._sync_clear_btn()
+
+    @Slot()
+    def clear_tracklist(self) -> None:
+        """Drop every disc and track from the list, progress back to zero."""
+        # The live handlers address rows by index, so wiping the table
+        # while a load or an extraction runs would send updates to the
+        # wrong place (or nowhere). The button is disabled then anyway.
+        if self._list_busy() or (
+            self.extract_worker is not None and self.extract_worker.isRunning()
+        ):
+            return
+        self._batch_active = False
+        self._reset_batch_ui()
+        self._tracks_done = 0
+        self._tracks_total = 0
+        self.disc_info = None
+        self.current_iso = None
+        self._extract_iso = None
+        self._extract_outdir = None
+        self.extract_btn.setEnabled(False)
+
+    def _sync_clear_btn(self) -> None:
+        """Enable "Clear tracklist" only when there is something to clear."""
+        busy = self._list_busy() or (
+            self.extract_worker is not None and self.extract_worker.isRunning()
+        )
+        self.clear_btn.setEnabled(not busy and self.table.rowCount() > 0)
 
     def _advance_queue(self) -> None:
         """Load metadata for the next queued disc (loads run one by one)."""
@@ -720,6 +752,7 @@ class MainWindow(QMainWindow):
         # Two lines: album name, then the folder link underneath.
         self.table.setRowHeight(base, 46)
         self._section_rows[self._disc_index] = {"header": base, "last": base}
+        self._sync_clear_btn()
         self._fit_height()
         self.load_metadata(path)
 
@@ -731,6 +764,7 @@ class MainWindow(QMainWindow):
         self.list_worker.finished_ok.connect(self.on_metadata)
         self.list_worker.failed.connect(self.on_worker_error)
         self.list_worker.start()
+        self._sync_clear_btn()
 
     @Slot(dict)
     def on_metadata(self, info: dict) -> None:
@@ -769,6 +803,9 @@ class MainWindow(QMainWindow):
             if self._draining:
                 self._advance_extraction()
         self._advance_queue()
+        # Deferred: the list worker is still winding down, so the busy
+        # check would keep the Clear button disabled for a moment.
+        QTimer.singleShot(0, self._sync_clear_btn)
 
     def populate_tracks(self, info: dict) -> None:
         """Add layer info + track rows inside this disc's section."""
@@ -893,6 +930,7 @@ class MainWindow(QMainWindow):
         if self._batch_active:
             self._disc_loaded += 1
             self._advance_queue()
+        QTimer.singleShot(0, self._sync_clear_btn)
 
     # ------------------------------------------------------------------
     def output_dir_for(self) -> Path:
@@ -946,6 +984,7 @@ class MainWindow(QMainWindow):
         self._extracting = True
         self.extract_btn.setEnabled(False)
         self._run_extract(self._extract_disc_idx)
+        self._sync_clear_btn()
 
     def _run_extract(self, idx: int) -> None:
         """Launch the extract worker for one already-listed disc."""
@@ -1040,6 +1079,7 @@ class MainWindow(QMainWindow):
             self._advance_extraction()
         else:
             self._finish_batch_if_done()
+        QTimer.singleShot(0, self._sync_clear_btn)
 
     @Slot(str)
     def on_extract_error(self, message: str) -> None:
@@ -1058,6 +1098,7 @@ class MainWindow(QMainWindow):
             self._advance_extraction()
         else:
             self._finish_batch_if_done()
+        QTimer.singleShot(0, self._sync_clear_btn)
 
     # ------------------------------------------------------------------
     @staticmethod

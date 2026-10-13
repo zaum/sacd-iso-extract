@@ -10,6 +10,7 @@ the finished tracks land in a new folder next to the source ISO.
 
 - Drag & drop (or click to browse), track list with live progress and log.
 - Stereo, multi-channel, or both layers; optional gapless (no zero-pad) output.
+- **Clear tracklist** button to start over; it also resets the progress bar.
 - Optional deletion of the source ISO after a successful extraction.
 - Damaged sectors are skipped with a warning instead of aborting the whole disc.
 - Resizable window; runs as a self-contained Windows executable.
