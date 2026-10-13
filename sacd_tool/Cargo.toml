@@ -13,6 +13,9 @@ path = "src/main.rs"
 name = "sacd_tool"
 path = "src/lib.rs"
 
+[build-dependencies]
+winres = "0.1"
+
 [dependencies]
 anyhow = "1.0.100"
 byteorder = "1.5.0"

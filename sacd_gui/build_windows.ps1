@@ -16,6 +16,7 @@ $toolDir   = Join-Path $root "sacd_tool"
 $releaseBin = Join-Path $toolDir "target\release\sacd-tool.exe"
 $bundleDir  = Join-Path $guiDir "tool"
 $distDir    = Join-Path $guiDir "dist"
+$iconFile   = Join-Path $root "resources\icon.ico"
 
 Write-Host "==> Building Rust helper (sacd-tool) ..."
 Push-Location $toolDir
@@ -45,6 +46,7 @@ try {
         --onefile `
         --windowed `
         --name "SACD-Extractor" `
+        --icon $iconFile `
         --add-data "worker.py;." `
         --add-data "tool;tool" `
         app.py
