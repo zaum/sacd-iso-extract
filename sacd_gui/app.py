@@ -15,6 +15,7 @@ from pathlib import Path
 from PySide6.QtCore import (
     QByteArray,
     QEvent,
+    QPoint,
     QSettings,
     Qt,
     QTimer,
@@ -346,11 +347,10 @@ class MainWindow(QMainWindow):
         # always-on-top pin, minimise/close) is docked into the window's
         # menu-widget strip, i.e. the very top edge of the window.
         self.setWindowFlag(Qt.FramelessWindowHint, True)
-        # Wide enough for the whole options row (checkboxes + layer + Extract)
-        # to fit on one line; the real minimum is computed from the layout
-        # after the widgets are built (see below).
+        # Placeholder only: once the widgets exist the window is sized to
+        # fit the options row (see the minimum-width computation below).
         self.setMinimumWidth(360)
-        self.resize(880, 640)
+        self.resize(560, 580)
 
         self.title_bar = TitleBar(self)
         self.setMenuWidget(self.title_bar)
@@ -451,7 +451,7 @@ class MainWindow(QMainWindow):
         )
         opt.addWidget(self.auto_extract)
 
-        self.delete_iso = QCheckBox("Delete original ISO after extraction")
+        self.delete_iso = QCheckBox("Delete original")
         self.delete_iso.setChecked(False)
         self.delete_iso.setToolTip(
             "After a successful extraction, move the original ISO to the\n"
@@ -466,8 +466,12 @@ class MainWindow(QMainWindow):
         self.layer_box.addItem("Both", "both")
         opt.addWidget(self.layer_box)
 
-        self.gapless = QCheckBox("Gapless (no zero-pad)")
+        self.gapless = QCheckBox("Gapless")
         self.gapless.setChecked(True)
+        self.gapless.setToolTip(
+            "Do not zero-pad the last block of each track, so consecutive\n"
+            "tracks play back seamlessly (matches sacd_extract -z)."
+        )
         opt.addWidget(self.gapless)
 
         opt.addStretch(1)
@@ -525,8 +529,13 @@ class MainWindow(QMainWindow):
         # raise the window's minimum width to whatever the content needs so
         # the checkbox labels stay readable at any allowed window size.
         self.setMinimumWidth(max(360, self.centralWidget().minimumSizeHint().width()))
-
         self._restore_settings()
+        # Fresh start (nothing saved yet): hug the content instead of using
+        # a fixed guess, so shortening a label narrows the window too. This
+        # has to run after _restore_settings(), because applying a window
+        # flag there makes Qt re-fit the window to its size hint.
+        if self.settings.value("geometry") is None:
+            self.resize(self.minimumWidth() + 40, 580)
 
     # ------------------------------------------------------------------
     # --- Track list as the single info surface ------------------------
@@ -1300,7 +1309,7 @@ class MainWindow(QMainWindow):
     def _maybe_delete_source(self) -> None:
         """Move the source ISO to the Recycle Bin after a successful run.
 
-        No confirmation is shown: ticking "Delete original ISO" already
+        No confirmation is shown: ticking "Delete original" already
         *is* the user's confirmation. The file goes to the Recycle Bin
         (never a hard delete) so it can still be recovered.
         """
@@ -1410,9 +1419,14 @@ class MainWindow(QMainWindow):
         rect = wintypes.RECT()
         ctypes.windll.user32.GetWindowRect(int(self.winId()), ctypes.byref(rect))
 
-        # Thin but grabbable border; the root layout's 18 px margins keep
-        # it clear of the actual controls.
-        border = 6
+        # Resize border. The hit test compares *physical* screen pixels, so
+        # a hard-coded 6 would shrink to 3 logical pixels on a 200% display
+        # (which is why the edges felt so hard to grab). Scale it with the
+        # display's device pixel ratio instead; the root layout's 18 px
+        # margins keep it clear of the actual controls.
+        dpr = self.devicePixelRatioF() or 1.0
+        border = max(6, int(round(8 * dpr)))
+
         on_left = x < rect.left + border
         on_right = x >= rect.right - border
         on_top = y < rect.top + border
@@ -1421,6 +1435,13 @@ class MainWindow(QMainWindow):
         HTCLIENT, HTLEFT, HTRIGHT, HTTOP = 1, 10, 11, 12
         HTTOPLEFT, HTTOPRIGHT, HTBOTTOM = 13, 14, 15
         HTBOTTOMLEFT, HTBOTTOMRIGHT = 16, 17
+
+        if (on_left or on_right or on_top or on_bottom) and self._over_button(
+            x, y
+        ):
+            # The pin / minimise / close buttons sit within a few pixels of
+            # the frame: resizing must never steal their clicks.
+            return True, HTCLIENT
 
         if on_top and on_left:
             return True, HTTOPLEFT
@@ -1439,6 +1460,15 @@ class MainWindow(QMainWindow):
         if on_bottom:
             return True, HTBOTTOM
         return True, HTCLIENT
+
+    def _over_button(self, x: int, y: int) -> bool:
+        """True when the screen point ``(x, y)`` sits on a real button.
+
+        Used by the WM_NCHITTEST handler so the resize border never eats a
+        click meant for the title bar controls.
+        """
+        child = self.childAt(self.mapFromGlobal(QPoint(int(x), int(y))))
+        return child is not None and child.inherits("QAbstractButton")
 
     def _arm_size_tracking(self) -> None:
         """Start counting manual resizes (runs just after the first show)."""
